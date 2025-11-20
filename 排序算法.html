@@ -1,0 +1,827 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>全屏自适应排序模拟器</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 全局无滚动，除非必要 */
+        body {
+            overflow: hidden;
+        }
+
+        /* 自定义细滚动条 */
+        ::-webkit-scrollbar {
+            width: 4px;
+            height: 4px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #0f172a;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 2px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #475569;
+        }
+
+        /* 代码高亮样式 */
+        .code-line {
+            font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+            font-size: 11px;
+            /* 字体调小以节省空间 */
+            line-height: 1.4;
+            color: #64748b;
+            white-space: pre;
+            padding-left: 8px;
+            border-left: 2px solid transparent;
+        }
+
+        .code-line.active-line {
+            background-color: #1e293b;
+            color: #fbbf24;
+            /* Amber-400 */
+            font-weight: bold;
+            border-left-color: #fbbf24;
+        }
+
+        /* 柱状图样式 */
+        .bar-container {
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+            /* 关键：让 flex item 能够收缩，不撑开父容器 */
+            min-height: 0;
+            flex: 1;
+            width: 100%;
+            gap: 1px;
+            padding-bottom: 4px;
+        }
+
+        .bar {
+            flex: 1;
+            transition: height 0.05s linear, background-color 0.05s;
+            position: relative;
+        }
+
+        /* Tooltip */
+        .bar:hover::after {
+            content: attr(data-value);
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(255, 255, 255, 0.9);
+            color: #000;
+            padding: 1px 4px;
+            border-radius: 2px;
+            font-size: 10px;
+            white-space: nowrap;
+            z-index: 50;
+            pointer-events: none;
+        }
+
+        /* 布局容器 */
+        #grid-container {
+            display: flex;
+            flex-wrap: wrap;
+            align-content: flex-start;
+            height: 100%;
+            width: 100%;
+        }
+
+        .algo-card {
+            /* 默认值，会被 JS 覆盖 */
+            width: 100%;
+            height: 100%;
+            border: 1px solid #1e293b;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            position: relative;
+        }
+    </style>
+</head>
+
+<body class="bg-slate-950 text-slate-200 h-screen w-screen flex flex-col">
+
+    <!-- 顶部极简 Header (节省垂直空间) -->
+    <header class="h-10 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-4 shrink-0 z-20">
+        <div class="flex items-center gap-2">
+            <span class="text-blue-500 font-bold tracking-wider">SORT</span>
+            <span class="text-slate-500 text-xs">Algo Simulator</span>
+        </div>
+        <div class="flex items-center gap-4 text-[10px] text-slate-400">
+            <div class="flex items-center gap-1">
+                <div class="w-2 h-2 bg-blue-600 rounded-sm"></div><span>待排</span>
+            </div>
+            <div class="flex items-center gap-1">
+                <div class="w-2 h-2 bg-yellow-500 rounded-sm"></div><span>比较</span>
+            </div>
+            <div class="flex items-center gap-1">
+                <div class="w-2 h-2 bg-red-500 rounded-sm"></div><span>交换/写</span>
+            </div>
+            <div class="flex items-center gap-1">
+                <div class="w-2 h-2 bg-green-500 rounded-sm"></div><span>完成</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- 主体布局 -->
+    <div class="flex flex-1 overflow-hidden">
+
+        <!-- 左侧：完全自适应的可视化区域 -->
+        <main class="flex-1 bg-slate-950 relative overflow-hidden">
+            <div id="grid-container">
+                <!-- 卡片由 JS 生成 -->
+            </div>
+
+            <!-- 空状态提示 -->
+            <div id="empty-state"
+                class="hidden absolute inset-0 flex flex-col items-center justify-center text-slate-600">
+                <p class="text-xl mb-2">未选择算法</p>
+                <p class="text-sm">请在右侧面板勾选至少一个排序算法</p>
+            </div>
+        </main>
+
+        <!-- 右侧：控制面板 (固定宽，内部滚动) -->
+        <aside class="w-72 bg-slate-900 border-l border-slate-800 flex flex-col shadow-2xl z-30">
+            <div class="p-4 space-y-5 overflow-y-auto flex-1">
+
+                <!-- 1. 算法选择 -->
+                <div>
+                    <h3 class="text-xs font-bold text-slate-500 uppercase mb-2">对比算法 (多选)</h3>
+                    <div class="grid grid-cols-1 gap-2" id="algo-checkboxes">
+                        <!-- JS 生成 -->
+                    </div>
+                </div>
+
+                <!-- 2. 数据源 -->
+                <div class="bg-slate-800/50 p-3 rounded border border-slate-700/50">
+                    <h3 class="text-xs font-bold text-slate-500 uppercase mb-2">数据设置</h3>
+
+                    <!-- 数量 -->
+                    <div class="mb-3">
+                        <div class="flex justify-between text-xs text-slate-400 mb-1">
+                            <span>数量 (N)</span>
+                            <input type="number" id="size-input"
+                                class="w-10 bg-slate-900 border border-slate-700 rounded px-1 text-center text-blue-400"
+                                value="50">
+                        </div>
+                        <input type="range" id="size-slider"
+                            class="w-full h-1 bg-slate-700 rounded appearance-none cursor-pointer accent-blue-500"
+                            min="5" max="150" value="50">
+                    </div>
+
+                    <!-- 自定义 -->
+                    <div class="mb-2">
+                        <input type="text" id="custom-array" placeholder="自定义数组: 10,5,8..."
+                            class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-white focus:border-blue-500 outline-none placeholder-slate-600">
+                    </div>
+
+                    <button id="btn-generate"
+                        class="w-full py-1.5 bg-slate-700 hover:bg-slate-600 text-xs text-white rounded border border-slate-600 transition">
+                        重置 / 生成数据
+                    </button>
+                </div>
+
+                <!-- 3. 运行控制 -->
+                <div>
+                    <h3 class="text-xs font-bold text-slate-500 uppercase mb-2">运行控制</h3>
+
+                    <div class="mb-3">
+                        <div class="flex justify-between text-xs text-slate-400 mb-1">
+                            <span>速度</span>
+                            <span id="speed-label" class="text-green-400">中等</span>
+                        </div>
+                        <input type="range" id="speed-slider"
+                            class="w-full h-1 bg-slate-700 rounded appearance-none cursor-pointer accent-green-500"
+                            min="1" max="200" value="100" style="direction: rtl">
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-2">
+                        <button id="btn-play"
+                            class="col-span-2 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded font-bold transition text-sm flex items-center justify-center gap-2">
+                            <span>▶</span> 运行
+                        </button>
+                        <button id="btn-pause"
+                            class="py-1.5 bg-slate-800 text-slate-300 border border-slate-700 rounded text-xs hover:bg-slate-700">
+                            ⏸ 暂停
+                        </button>
+                        <button id="btn-step"
+                            class="py-1.5 bg-slate-800 text-slate-300 border border-slate-700 rounded text-xs hover:bg-slate-700">
+                            ⏯ 单步
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 底部版权/说明 -->
+            <div class="p-3 border-t border-slate-800 text-[10px] text-slate-600 text-center">
+                JS Sorting Visualizer v3.0
+            </div>
+        </aside>
+    </div>
+
+    <!-- 逻辑脚本 -->
+    <script>
+        // ==========================================
+        // 1. 算法定义 (含 Python 代码与生成器)
+        // ==========================================
+
+        const ALGORITHMS = {
+            bubble: {
+                name: "冒泡排序",
+                python: `def bubble_sort(arr):
+    n = len(arr)
+    for i in range(n):
+        for j in range(0, n-i-1):
+            if arr[j] > arr[j+1]:
+                # 交换
+                arr[j], arr[j+1] = arr[j+1], arr[j]`,
+                gen: function* (arr) {
+                    let n = arr.length;
+                    yield { line: 0 };
+                    for (let i = 0; i < n; i++) {
+                        yield { line: 2 };
+                        for (let j = 0; j < n - i - 1; j++) {
+                            // 比较
+                            yield { type: 'cmp', indices: [j, j + 1], line: 4 };
+                            if (arr[j] > arr[j + 1]) {
+                                let temp = arr[j];
+                                arr[j] = arr[j + 1];
+                                arr[j + 1] = temp;
+                                // 交换
+                                yield { type: 'swap', indices: [j, j + 1], line: 6 };
+                            }
+                        }
+                        yield { type: 'sorted', index: n - i - 1, line: 2 };
+                    }
+                    yield { type: 'finish' };
+                }
+            },
+            selection: {
+                name: "选择排序",
+                python: `def selection_sort(arr):
+    for i in range(len(arr)):
+        min_idx = i
+        for j in range(i+1, len(arr)):
+            if arr[j] < arr[min_idx]:
+                min_idx = j
+        arr[i], arr[min_idx] = arr[min_idx], arr[i]`,
+                gen: function* (arr) {
+                    let n = arr.length;
+                    for (let i = 0; i < n; i++) {
+                        let min_idx = i;
+                        yield { type: 'mark', indices: [i], line: 2 };
+
+                        for (let j = i + 1; j < n; j++) {
+                            yield { type: 'cmp', indices: [j, min_idx], line: 4 };
+                            if (arr[j] < arr[min_idx]) {
+                                min_idx = j;
+                                yield { type: 'mark_min', indices: [min_idx], line: 5 };
+                            }
+                        }
+                        if (min_idx !== i) {
+                            let temp = arr[i];
+                            arr[i] = arr[min_idx];
+                            arr[min_idx] = temp;
+                            yield { type: 'swap', indices: [i, min_idx], line: 6 };
+                        }
+                        yield { type: 'sorted', index: i, line: 1 };
+                    }
+                    yield { type: 'finish' };
+                }
+            },
+            insertion: {
+                name: "插入排序",
+                python: `def insertion_sort(arr):
+    for i in range(1, len(arr)):
+        key = arr[i]
+        j = i - 1
+        while j >= 0 and key < arr[j]:
+            arr[j + 1] = arr[j]
+            j -= 1
+        arr[j + 1] = key`,
+                gen: function* (arr) {
+                    let n = arr.length;
+                    yield { type: 'sorted', index: 0, line: 0 };
+                    for (let i = 1; i < n; i++) {
+                        let key = arr[i];
+                        let j = i - 1;
+                        yield { type: 'pick', indices: [i], line: 2 };
+
+                        while (j >= 0) {
+                            yield { type: 'cmp', indices: [j, i], val: key, line: 4 };
+                            if (key < arr[j]) {
+                                arr[j + 1] = arr[j];
+                                yield { type: 'overwrite', indices: [j + 1], val: arr[j], line: 5 };
+                                j -= 1;
+                            } else {
+                                break;
+                            }
+                        }
+                        arr[j + 1] = key;
+                        yield { type: 'overwrite', indices: [j + 1], val: key, line: 7 };
+
+                        for (let k = 0; k <= i; k++) yield { type: 'sorted', index: k, line: 1, noPause: true };
+                    }
+                    yield { type: 'finish' };
+                }
+            },
+            quick: {
+                name: "快速排序",
+                python: `def partition(arr, low, high):
+    pivot = arr[high]
+    i = low - 1
+    for j in range(low, high):
+        if arr[j] < pivot:
+            i += 1
+            arr[i], arr[j] = arr[j], arr[i]
+    arr[i+1], arr[high] = arr[high], arr[i+1]
+    return i + 1`, // 为了省空间，只显示 partition 核心逻辑
+                gen: function* (arr) {
+                    yield* this.quickSortHelper(arr, 0, arr.length - 1);
+                    yield { type: 'finish' };
+                },
+                quickSortHelper: function* (arr, low, high) {
+                    if (low < high) {
+                        let pivot = arr[high];
+                        yield { type: 'pivot', indices: [high], line: 1 };
+                        let i = low - 1;
+
+                        for (let j = low; j < high; j++) {
+                            yield { type: 'cmp', indices: [j, high], line: 4 };
+                            if (arr[j] < pivot) {
+                                i++;
+                                let temp = arr[i]; arr[i] = arr[j]; arr[j] = temp;
+                                yield { type: 'swap', indices: [i, j], line: 6 };
+                            }
+                        }
+                        let temp = arr[i + 1]; arr[i + 1] = arr[high]; arr[high] = temp;
+                        yield { type: 'swap', indices: [i + 1, high], line: 7 };
+                        let pi = i + 1;
+                        yield { type: 'sorted', index: pi, line: 8 };
+
+                        yield* this.quickSortHelper(arr, low, pi - 1);
+                        yield* this.quickSortHelper(arr, pi + 1, high);
+                    } else if (low === high) {
+                        yield { type: 'sorted', index: low, line: 8 };
+                    }
+                }
+            },
+            merge: {
+                name: "归并排序",
+                python: `def merge(arr, l, m, r):
+    L = arr[l:m+1]
+    R = arr[m+1:r+1]
+    k = l
+    while i < len(L) and j < len(R):
+        if L[i] <= R[j]:
+            arr[k] = L[i]
+        else:
+            arr[k] = R[j]`, // 简化显示
+                gen: function* (arr) {
+                    yield* this.mergeSortHelper(arr, 0, arr.length - 1);
+                    yield { type: 'finish' };
+                },
+                mergeSortHelper: function* (arr, l, r) {
+                    if (l >= r) return;
+                    let m = Math.floor((l + r) / 2);
+                    yield* this.mergeSortHelper(arr, l, m);
+                    yield* this.mergeSortHelper(arr, m + 1, r);
+                    yield* this.merge(arr, l, m, r);
+                },
+                merge: function* (arr, l, m, r) {
+                    let n1 = m - l + 1;
+                    let n2 = r - m;
+                    let L = new Array(n1);
+                    let R = new Array(n2);
+
+                    for (let i = 0; i < n1; i++) { L[i] = arr[l + i]; yield { type: 'access', indices: [l + i] }; }
+                    for (let j = 0; j < n2; j++) { R[j] = arr[m + 1 + j]; yield { type: 'access', indices: [m + 1 + j] }; }
+
+                    let i = 0, j = 0, k = l;
+                    yield { line: 3 };
+                    while (i < n1 && j < n2) {
+                        yield { type: 'cmp', indices: [], line: 5 }; // 逻辑比较，无法高亮L/R这种临时数组，仅示意
+                        if (L[i] <= R[j]) {
+                            arr[k] = L[i];
+                            yield { type: 'overwrite', indices: [k], val: L[i], line: 6 };
+                            i++;
+                        } else {
+                            arr[k] = R[j];
+                            yield { type: 'overwrite', indices: [k], val: R[j], line: 8 };
+                            j++;
+                        }
+                        k++;
+                    }
+                    while (i < n1) {
+                        arr[k] = L[i];
+                        yield { type: 'overwrite', indices: [k], val: L[i] };
+                        i++; k++;
+                    }
+                    while (j < n2) {
+                        arr[k] = R[j];
+                        yield { type: 'overwrite', indices: [k], val: R[j] };
+                        j++; k++;
+                    }
+                    // 标记这一段归并完成
+                    for (let x = l; x <= r; x++) yield { type: 'sorted', index: x, noPause: true };
+                }
+            }
+        };
+
+        // ==========================================
+        // 2. 状态管理
+        // ==========================================
+        const state = {
+            array: [],
+            instances: [],
+            isPlaying: false,
+            timer: null,
+            delay: 20
+        };
+
+        const dom = {
+            grid: document.getElementById('grid-container'),
+            checkboxes: document.getElementById('algo-checkboxes'),
+            sizeInput: document.getElementById('size-input'),
+            sizeSlider: document.getElementById('size-slider'),
+            customInput: document.getElementById('custom-array'),
+            speedSlider: document.getElementById('speed-slider'),
+            speedLabel: document.getElementById('speed-label'),
+            emptyState: document.getElementById('empty-state')
+        };
+
+        // ==========================================
+        // 3. 初始化与事件
+        // ==========================================
+        function init() {
+            // 生成复选框
+            Object.keys(ALGORITHMS).forEach(key => {
+                const div = document.createElement('div');
+                div.className = "flex items-center bg-slate-800/50 p-2 rounded border border-slate-700 hover:border-blue-500 transition cursor-pointer";
+                div.innerHTML = `
+                    <input type="checkbox" value="${key}" id="chk-${key}" class="w-3 h-3 text-blue-500 bg-slate-700 border-slate-600 rounded focus:ring-0 focus:ring-offset-0">
+                    <label for="chk-${key}" class="ml-2 text-xs text-slate-300 cursor-pointer flex-1 select-none">${ALGORITHMS[key].name}</label>
+                `;
+                // 点击 div 也能触发 checkbox
+                div.addEventListener('click', (e) => {
+                    if (e.target.tagName !== 'INPUT') {
+                        const chk = div.querySelector('input');
+                        chk.checked = !chk.checked;
+                        chk.dispatchEvent(new Event('change'));
+                    }
+                });
+                div.querySelector('input').addEventListener('change', rebuildGrid);
+                dom.checkboxes.appendChild(div);
+            });
+
+            // 默认勾选前两个
+            const inputs = dom.checkboxes.querySelectorAll('input');
+            if (inputs[0]) inputs[0].checked = true;
+            // if(inputs[1]) inputs[1].checked = true; 
+
+            // 绑定
+            dom.sizeSlider.addEventListener('input', (e) => { dom.sizeInput.value = e.target.value; generateData(); });
+            dom.sizeInput.addEventListener('change', (e) => {
+                let v = parseInt(e.target.value);
+                if (v < 5) v = 5; if (v > 150) v = 150;
+                dom.sizeSlider.value = v;
+                generateData();
+            });
+
+            dom.speedSlider.addEventListener('input', updateSpeed);
+            document.getElementById('btn-generate').addEventListener('click', () => {
+                if (dom.customInput.value.trim()) parseCustom();
+                else generateData();
+            });
+
+            document.getElementById('btn-play').addEventListener('click', play);
+            document.getElementById('btn-pause').addEventListener('click', pause);
+            document.getElementById('btn-step').addEventListener('click', step);
+
+            rebuildGrid();
+            generateData();
+            updateSpeed();
+        }
+
+        function updateSpeed() {
+            const val = parseInt(dom.speedSlider.value);
+            // 1(left) -> 200ms, 200(right) -> 1ms
+            // 公式: 201 - val
+            state.delay = Math.max(1, 201 - val);
+
+            let label = "中等";
+            if (val < 50) label = "慢";
+            else if (val > 150) label = "极速";
+            else label = "中等";
+            dom.speedLabel.innerText = label;
+        }
+
+        function parseCustom() {
+            const str = dom.customInput.value;
+            const arr = str.split(/[,，\s]+/).map(Number).filter(n => !isNaN(n));
+            if (arr.length > 1) {
+                state.array = arr;
+                resetInstances();
+            } else {
+                alert("请输入有效的数字，用逗号分隔");
+            }
+        }
+
+        function generateData() {
+            dom.customInput.value = "";
+            const n = parseInt(dom.sizeSlider.value);
+            const arr = [];
+            for (let i = 0; i < n; i++) arr.push(Math.floor(Math.random() * 95) + 5);
+            state.array = arr;
+            resetInstances();
+        }
+
+        // ==========================================
+        // 4. 核心：网格构建 (Smart Layout)
+        // ==========================================
+        function rebuildGrid() {
+            pause();
+            dom.grid.innerHTML = "";
+            state.instances = [];
+
+            const checked = Array.from(dom.checkboxes.querySelectorAll('input:checked')).map(i => i.value);
+            const count = checked.length;
+
+            if (count === 0) {
+                dom.emptyState.classList.remove('hidden');
+                return;
+            }
+            dom.emptyState.classList.add('hidden');
+
+            // 计算 CSS 尺寸
+            // 1个: w100 h100
+            // 2个: w50 h100
+            // 3-4个: w50 h50
+            // 5-6个: w33.3 h50
+            let widthClass = "w-full";
+            let heightClass = "h-full";
+
+            if (count === 2) {
+                widthClass = "w-1/2";
+                heightClass = "h-full";
+            } else if (count === 3 || count === 4) {
+                widthClass = "w-1/2";
+                heightClass = "h-1/2";
+            } else if (count >= 5) {
+                widthClass = "w-1/3";
+                heightClass = "h-1/2";
+            }
+
+            checked.forEach(key => {
+                const algo = ALGORITHMS[key];
+                const inst = {
+                    key: key,
+                    algo: algo,
+                    bars: [],
+                    lineEls: [],
+                    finished: false,
+                    stats: { cmp: 0, swap: 0 } // 统计数据
+                };
+
+                // Card Container
+                const card = document.createElement('div');
+                card.className = `algo-card ${widthClass} ${heightClass} border-r border-b border-slate-800 bg-slate-950`;
+                // 这里的 inline style 确保覆盖 tailwind 默认行为（如果需要精确控制）
+                if (count === 2) card.style.width = "50%";
+                if (count >= 3 && count <= 4) { card.style.width = "50%"; card.style.height = "50%"; }
+                if (count >= 5) { card.style.width = "33.33%"; card.style.height = "50%"; }
+
+                // 内部结构: Title -> Code(fixed height) -> BarArea(flex grow) -> StatusBar
+                card.innerHTML = `
+                    <div class="flex justify-between items-center px-3 py-2 border-b border-slate-800 bg-slate-900/30 h-8 shrink-0">
+                        <span class="text-xs font-bold text-blue-400">${algo.name}</span>
+                        <span class="text-[10px] text-slate-500 status-label">准备</span>
+                    </div>
+                    
+                    <!-- 代码区域 (固定高度，内部滚动) -->
+                    <div class="bg-slate-950 border-b border-slate-800 overflow-y-auto shrink-0" style="height: 80px;">
+                        <div class="code-box p-1"></div>
+                    </div>
+
+                    <!-- 可视化区域 (占据剩余空间) -->
+                    <div class="flex-1 relative w-full flex flex-col min-h-0">
+                        <div class="bar-container px-2"></div>
+                    </div>
+
+                    <!-- 统计状态栏 -->
+                    <div class="h-6 bg-slate-900 border-t border-slate-800 flex items-center px-3 text-[10px] text-slate-400 justify-between shrink-0">
+                        <div>Comp: <span class="text-yellow-500 stat-cmp">0</span></div>
+                        <div>Swap/W: <span class="text-red-500 stat-swap">0</span></div>
+                    </div>
+                `;
+
+                // 填充代码
+                const codeBox = card.querySelector('.code-box');
+                algo.python.split('\n').forEach(line => {
+                    const d = document.createElement('div');
+                    d.className = 'code-line';
+                    d.textContent = line;
+                    codeBox.appendChild(d);
+                    inst.lineEls.push(d);
+                });
+
+                inst.container = card.querySelector('.bar-container');
+                inst.statusLabel = card.querySelector('.status-label');
+                inst.statCmpEl = card.querySelector('.stat-cmp');
+                inst.statSwapEl = card.querySelector('.stat-swap');
+
+                dom.grid.appendChild(card);
+                state.instances.push(inst);
+            });
+
+            if (state.array.length > 0) resetInstances();
+        }
+
+        function resetInstances() {
+            pause();
+            state.instances.forEach(inst => {
+                inst.finished = false;
+                inst.stats = { cmp: 0, swap: 0 };
+                inst.statCmpEl.innerText = "0";
+                inst.statSwapEl.innerText = "0";
+                inst.statusLabel.innerText = "就绪";
+                inst.statusLabel.className = "text-[10px] text-slate-500 status-label";
+
+                // 重置高亮
+                inst.lineEls.forEach(el => el.classList.remove('active-line'));
+
+                // 重新生成柱子
+                inst.container.innerHTML = "";
+                inst.bars = [];
+                const localArr = [...state.array];
+                const maxVal = Math.max(...state.array, 100);
+
+                localArr.forEach(val => {
+                    const b = document.createElement('div');
+                    b.className = "bar bg-blue-600";
+                    b.style.height = `${(val / maxVal) * 100}%`;
+                    b.setAttribute('data-value', val);
+                    inst.container.appendChild(b);
+                    inst.bars.push(b);
+                });
+
+                // 重新初始化生成器
+                inst.gen = inst.algo.gen(localArr);
+                inst.localArr = localArr;
+            });
+        }
+
+        // ==========================================
+        // 5. 动画引擎
+        // ==========================================
+        function play() {
+            if (state.isPlaying) return;
+            const allDone = state.instances.every(i => i.finished);
+            if (allDone) resetInstances();
+            state.isPlaying = true;
+            updateBtns();
+            loop();
+        }
+        function pause() {
+            state.isPlaying = false;
+            clearTimeout(state.timer);
+            updateBtns();
+        }
+        function step() {
+            pause();
+            const allDone = state.instances.every(i => i.finished);
+            if (allDone) resetInstances();
+            doFrame();
+        }
+
+        function updateBtns() {
+            const playBtn = document.getElementById('btn-play');
+            const pauseBtn = document.getElementById('btn-pause');
+            if (state.isPlaying) {
+                playBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                pauseBtn.classList.remove('bg-slate-800', 'text-slate-300');
+                pauseBtn.classList.add('bg-yellow-600', 'text-white');
+            } else {
+                playBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+                pauseBtn.classList.remove('bg-yellow-600', 'text-white');
+                pauseBtn.classList.add('bg-slate-800', 'text-slate-300');
+            }
+        }
+
+        function loop() {
+            if (!state.isPlaying) return;
+            doFrame();
+            state.timer = setTimeout(loop, state.delay);
+        }
+
+        function doFrame() {
+            let anyRunning = false;
+            state.instances.forEach(inst => {
+                if (inst.finished) return;
+
+                // 循环处理 noPause 的步骤，直到遇到需要渲染暂停的步骤
+                let res;
+                do {
+                    res = inst.gen.next();
+                    if (res.done) {
+                        inst.finished = true;
+                        inst.statusLabel.innerText = "完成";
+                        inst.statusLabel.className = "text-[10px] text-green-400 font-bold status-label";
+                        inst.bars.forEach(b => b.className = "bar bg-green-500");
+                        highlightLine(inst, -1);
+                        break; // 退出内层 loop
+                    }
+
+                    const action = res.value;
+                    if (!action.noPause) anyRunning = true; // 只要有一个没结束且不是 noPause，就视为运行中
+
+                    renderAction(inst, action);
+
+                } while (res.value && res.value.noPause && !res.done);
+            });
+
+            if (!anyRunning && state.isPlaying) pause();
+        }
+
+        function renderAction(inst, action) {
+            // 1. 统计更新
+            if (action.type === 'cmp') {
+                inst.stats.cmp++;
+                inst.statCmpEl.innerText = inst.stats.cmp;
+            } else if (action.type === 'swap' || action.type === 'overwrite') {
+                inst.stats.swap++;
+                inst.statSwapEl.innerText = inst.stats.swap;
+            }
+
+            // 2. 代码高亮
+            if (action.line !== undefined) highlightLine(inst, action.line);
+
+            // 3. 颜色渲染
+            // 先简单重置非绿色柱子 (性能优化：仅当不是大量数据时遍历，这里简单遍历)
+            const bars = inst.bars;
+            const maxVal = Math.max(...state.array, 100);
+
+            // 恢复颜色
+            // 只有当 type 不是 sorted 时才需要大面积恢复，或者只恢复上一帧被染色的？
+            // 为保证正确性，我们清除所有临时颜色(黄/红/紫)
+            // 性能权衡：100个元素遍历非常快
+            for (let i = 0; i < bars.length; i++) {
+                if (!bars[i].classList.contains('bg-green-500')) {
+                    bars[i].className = "bar bg-blue-600";
+                }
+            }
+
+            if (!action.indices) return;
+
+            action.indices.forEach(idx => {
+                if (!bars[idx]) return;
+                const b = bars[idx];
+
+                if (action.type === 'cmp') b.className = "bar bg-yellow-500";
+                else if (action.type === 'swap' || action.type === 'overwrite') {
+                    b.className = "bar bg-red-500";
+                    // 只有 swap/overwrite 才由于值变化需要更新高度
+                    const val = (action.val !== undefined) ? action.val : inst.localArr[idx];
+                    b.style.height = `${(val / maxVal) * 100}%`;
+                    b.setAttribute('data-value', val);
+                }
+                else if (action.type === 'pivot') b.className = "bar bg-purple-500";
+                else if (action.type === 'sorted') b.className = "bar bg-green-500";
+                else if (action.type === 'mark') b.className = "bar bg-cyan-500";
+                else if (action.type === 'mark_min') b.className = "bar bg-orange-500";
+            });
+        }
+
+        function highlightLine(inst, lineIdx) {
+            const old = inst.container.parentElement.parentElement.querySelector('.active-line');
+            if (old) old.classList.remove('active-line');
+
+            if (lineIdx >= 0 && inst.lineEls[lineIdx]) {
+                const el = inst.lineEls[lineIdx];
+                el.classList.add('active-line');
+                // 自动滚动代码区
+                const box = el.parentElement; // .code-box
+                const wrapper = box.parentElement; // overflow container
+                // 简单逻辑：保持当前行在中间
+                if (el.offsetTop > wrapper.scrollTop + wrapper.clientHeight - 20 || el.offsetTop < wrapper.scrollTop) {
+                    wrapper.scrollTop = el.offsetTop - wrapper.clientHeight / 2;
+                }
+            }
+        }
+
+        init();
+    </script>
+</body>
+
+</html>
